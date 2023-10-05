@@ -97,9 +97,11 @@ var brokenAuthHeaderDomains = []string{
 	"oktapreview.com",
 }
 
-// connectorData stores information for sessions authenticated by this connector
-type connectorData struct {
-	RefreshToken []byte
+// OidConnectorData stores information for sessions authenticated by this connector
+type OidConnectorData struct {
+	AccessToken  string
+	IdToken      string
+	RefreshToken string
 }
 
 // Detect auth header provider issues for known providers. This lets users
@@ -278,7 +280,7 @@ func (c *oidcConnector) HandleCallback(s connector.Scopes, r *http.Request) (ide
 
 // Refresh is used to refresh a session with the refresh token provided by the IdP
 func (c *oidcConnector) Refresh(ctx context.Context, s connector.Scopes, identity connector.Identity) (connector.Identity, error) {
-	cd := connectorData{}
+	cd := OidConnectorData{}
 	err := json.Unmarshal(identity.ConnectorData, &cd)
 	if err != nil {
 		return identity, fmt.Errorf("oidc: failed to unmarshal connector data: %v", err)
@@ -287,7 +289,7 @@ func (c *oidcConnector) Refresh(ctx context.Context, s connector.Scopes, identit
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, c.httpClient)
 
 	t := &oauth2.Token{
-		RefreshToken: string(cd.RefreshToken),
+		RefreshToken: cd.RefreshToken,
 		Expiry:       time.Now().Add(-time.Hour),
 	}
 	token, err := c.oauth2Config.TokenSource(ctx, t).Token()
@@ -309,7 +311,11 @@ func (c *oidcConnector) TokenIdentity(ctx context.Context, subjectTokenType, sub
 func (c *oidcConnector) createIdentity(ctx context.Context, identity connector.Identity, token *oauth2.Token, caller caller) (connector.Identity, error) {
 	var claims map[string]interface{}
 
-	if rawIDToken, ok := token.Extra("id_token").(string); ok {
+	var (
+		rawIDToken string
+		ok         bool
+	)
+	if rawIDToken, ok = token.Extra("id_token").(string); ok {
 		idToken, err := c.verifier.Verify(ctx, rawIDToken)
 		if err != nil {
 			return identity, fmt.Errorf("oidc: failed to verify ID Token: %v", err)
@@ -427,8 +433,10 @@ func (c *oidcConnector) createIdentity(ctx context.Context, identity connector.I
 		}
 	}
 
-	cd := connectorData{
-		RefreshToken: []byte(token.RefreshToken),
+	cd := OidConnectorData{
+		AccessToken:  token.AccessToken,
+		IdToken:      rawIDToken,
+		RefreshToken: token.RefreshToken,
 	}
 
 	connData, err := json.Marshal(&cd)
